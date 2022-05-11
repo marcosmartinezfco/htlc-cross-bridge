@@ -2,10 +2,13 @@
 pragma solidity ^0.8.13;
 
 import "../interfaces/IERC20.sol";
+import "@Openzeppelin/contracts/access/Ownable.sol";
 
-contract htlcBridge {
+contract htlcBridge is Ownable {
 
     event NewPortal(address indexed Sender, uint Amount, address Contract);
+    event DestinationPortalOpened(address indexed Sender, address indexed Receiver, uint Amount);
+    event DestinationTransferFinalized(address indexed Sender);
 
     struct Transfer {
         bytes32 commitment;     //merkle tree root hash
@@ -17,44 +20,79 @@ contract htlcBridge {
         uint timeLock;
     }
 
-    mapping(address=>Transfer) _transfers;
-    mapping(address=>bool) _hasActiveTransfer;
-    mapping(address=>mapping(address=>uint)) _lockedValue;
+    mapping(address=>Transfer) _transfersOut;
+    mapping(address=>Transfer) _transfersIn;
+    mapping(address=>bool) _hasActiveTransferOut;
+    mapping(address=>address) public contractToContract;
 
-    modifier noActiveTransfer {
-        require(_hasActiveTransfer[msg.sender] == false, "Error: Ongoing Transfer, wait until it either completes or expires");
+    modifier noActiveTransferOut {
+        require(_hasActiveTransferOut[msg.sender] == false, "Error: Ongoing Transfer, wait until it either completes or expires");
         _;
     }
 
-    function initPortal(bytes32 _commitment, bytes32 _hashLock, address _tokenContract, address _receiver, uint _amount) external noActiveTransfer{
+    function initPortal(bytes32 _commitment, bytes32 _hashLock, address _tokenContract, address _receiver, uint _amount) external noActiveTransferOut{
         IERC20 tokenContract = IERC20(_tokenContract);
         require(tokenContract.allowance(msg.sender, address(this)) >= _amount, "Error: Insuficient allowance");
-        _hasActiveTransfer[msg.sender] = true;
-        _lockedValue[msg.sender][_tokenContract] += _amount;
-        _transfers[msg.sender] = Transfer(_commitment, msg.sender, _receiver, _tokenContract, _amount, _hashLock, block.timestamp + 1 hours);
+        _hasActiveTransferOut[msg.sender] = true;
+        _transfersOut[msg.sender] = Transfer(_commitment, msg.sender, _receiver, _tokenContract, _amount, _hashLock, block.timestamp + 1 hours);
         tokenContract.transferFrom(msg.sender, address(this), _amount);
         emit NewPortal(msg.sender, _amount, _tokenContract);
     }
 
-    function getTransfer(address _sender) external view
+    function portalFromOtherChain(
+        bytes32 _commitment, 
+        bytes32 _hashLock, 
+        uint _timeLock, 
+        address _tokenContract, 
+        address _sender, 
+        address _receiver, 
+        uint _amount) 
+    external {
+        require(getCommitment(_sender, _receiver, _tokenContract, _amount) == _commitment, "Error: Transfer data doesn't match commitment");
+        require(contractToContract[_tokenContract] != address(0x0), "Error: Token contract doesn't have a match in this chain");
+        _transfersIn[_receiver] = Transfer(_commitment, _sender, _receiver, contractToContract[_tokenContract], _amount, _hashLock, _timeLock);
+        emit DestinationPortalOpened(_sender, _receiver, _amount);
+
+    }
+
+    function finalizeInterPortalTransferDest(address _receiver, string memory _secretKey) public { 
+        Transfer memory transfer = _transfersIn[_receiver];
+        IERC20 tokenContract = IERC20(contractToContract[transfer.tokenContract]);
+        require(_hashThis(abi.encode(_secretKey)) == transfer.hashLock, "Error: hash lock does not match");
+        require(block.timestamp <= transfer.timeLock, "Error: transfer wasn't finalized within time");
+        require(tokenContract.balanceOf(address(this)) >= transfer.amount, "Error: not enough liquidity to bridge funds");
+        tokenContract.transfer(_receiver, transfer.amount);
+        emit DestinationTransferFinalized(transfer.sender);
+    }
+
+    function finalizeInterPortalTransferOrigin(address _sender) public { 
+        _hasActiveTransferOut[_sender] = false;
+    }
+
+    function setPairContract(address _source, address _local) public onlyOwner {
+        contractToContract[_source] = _local;
+    }
+
+    function getTransferOut(address _sender) external view
     returns(
         bytes32,
         address,
         address,
         address,
         uint,
+        uint,
         bytes32
     ){
-        require(_hasActiveTransfer[_sender], "Error: There aren't any ongoing transfer for the sender");
-        Transfer memory transfer = _transfers[_sender];
-        return (transfer.commitment, _sender, transfer.receiver, transfer.tokenContract, transfer.amount, transfer.hashLock);
+        require(_hasActiveTransferOut[_sender], "Error: There aren't any ongoing transfer for the sender");
+        Transfer memory transfer = _transfersOut[_sender];
+        return (transfer.commitment, _sender, transfer.receiver, transfer.tokenContract, transfer.amount, transfer.timeLock, transfer.hashLock);
     }
 
     function getCommitment(address _sender, address _receiver, address _tokenContract, uint _amount) public pure returns(bytes32) {
         return _hashThis(abi.encodePacked(
                     _hashThis(abi.encodePacked(_hashThis(abi.encode(_sender)),_hashThis(abi.encode(_receiver)))),
                     _hashThis(abi.encodePacked(_hashThis(abi.encode(_tokenContract)),_hashThis(abi.encode(_amount))))
-            ));
+        ));
     }
 
     function _hashThis(bytes memory _input) private pure returns(bytes32){
