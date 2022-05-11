@@ -49,4 +49,15 @@ contract htlcBridge {
         Transfer memory transfer = _transfers[_sender];
         return (transfer.commitment, _sender, transfer.receiver, transfer.tokenContract, transfer.amount, transfer.hashLock);
     }
+
+    function getCommitment(address _sender, address _receiver, address _tokenContract, uint _amount) public pure returns(bytes32) {
+        return _hashThis(abi.encodePacked(
+                    _hashThis(abi.encodePacked(_hashThis(abi.encode(_sender)),_hashThis(abi.encode(_receiver)))),
+                    _hashThis(abi.encodePacked(_hashThis(abi.encode(_tokenContract)),_hashThis(abi.encode(_amount))))
+            ));
+    }
+
+    function _hashThis(bytes memory _input) private pure returns(bytes32){
+        return sha256(_input);
+    }
 }
