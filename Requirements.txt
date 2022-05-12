@@ -1,1 +1,2 @@
 eth-brownie
+pytest

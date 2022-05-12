@@ -58,7 +58,7 @@ contract htlcBridge is Ownable {
     function finalizeInterPortalTransferDest(address _receiver, string memory _secretKey) public { 
         Transfer memory transfer = _transfersIn[_receiver];
         IERC20 tokenContract = IERC20(contractToContract[transfer.tokenContract]);
-        require(_hashThis(abi.encode(_secretKey)) == transfer.hashLock, "Error: hash lock does not match");
+        require(hashThis(abi.encode(_secretKey)) == transfer.hashLock, "Error: hash lock does not match");
         require(block.timestamp <= transfer.timeLock, "Error: transfer wasn't finalized within time");
         require(tokenContract.balanceOf(address(this)) >= transfer.amount, "Error: not enough liquidity to bridge funds");
         tokenContract.transfer(_receiver, transfer.amount);
@@ -89,13 +89,13 @@ contract htlcBridge is Ownable {
     }
 
     function getCommitment(address _sender, address _receiver, address _tokenContract, uint _amount) public pure returns(bytes32) {
-        return _hashThis(abi.encodePacked(
-                    _hashThis(abi.encodePacked(_hashThis(abi.encode(_sender)),_hashThis(abi.encode(_receiver)))),
-                    _hashThis(abi.encodePacked(_hashThis(abi.encode(_tokenContract)),_hashThis(abi.encode(_amount))))
+        return hashThis(abi.encodePacked(
+                    hashThis(abi.encodePacked(hashThis(abi.encode(_sender)),hashThis(abi.encode(_receiver)))),
+                    hashThis(abi.encodePacked(hashThis(abi.encode(_tokenContract)),hashThis(abi.encode(_amount))))
         ));
     }
 
-    function _hashThis(bytes memory _input) private pure returns(bytes32){
+    function hashThis(bytes memory _input) public pure returns(bytes32){
         return sha256(_input);
     }
 }
