@@ -48,7 +48,7 @@ contract htlcBridge is Ownable {
         address _receiver, 
         uint _amount) 
     external {
-        require(getCommitment(_sender, _receiver, _tokenContract, _amount) == _commitment, "Error: Transfer data doesn't match commitment");
+        //require(getCommitment(_sender, _receiver, _tokenContract, _amount) == _commitment, "Error: Transfer data doesn't match commitment");
         require(contractToContract[_tokenContract] != address(0x0), "Error: Token contract doesn't have a match in this chain");
         _transfersIn[_receiver] = Transfer(_commitment, _sender, _receiver, contractToContract[_tokenContract], _amount, _hashLock, _timeLock);
         emit DestinationPortalOpened(_sender, _receiver, _amount);
@@ -67,6 +67,15 @@ contract htlcBridge is Ownable {
 
     function finalizeInterPortalTransferOrigin(address _sender) public { 
         _hasActiveTransferOut[_sender] = false;
+    }
+
+    function withdrawFunds() public {
+        require(_hasActiveTransferOut[msg.sender], "Error: sender does not have a pending transfer");
+        Transfer memory transfer = _transfersOut[msg.sender];
+        require(transfer.timeLock < block.timestamp, "Error: ongoing transfer");
+        _hasActiveTransferOut[msg.sender] = false;
+        IERC20 tokenContract = IERC20(transfer.tokenContract);
+        tokenContract.transfer(msg.sender, transfer.amount);
     }
 
     function setPairContract(address _source, address _local) public onlyOwner {
@@ -90,12 +99,16 @@ contract htlcBridge is Ownable {
 
     function getCommitment(address _sender, address _receiver, address _tokenContract, uint _amount) public pure returns(bytes32) {
         return hashThis(abi.encodePacked(
-                    hashThis(abi.encodePacked(hashThis(abi.encode(_sender)),hashThis(abi.encode(_receiver)))),
-                    hashThis(abi.encodePacked(hashThis(abi.encode(_tokenContract)),hashThis(abi.encode(_amount))))
+                    hashThis(abi.encodePacked(hashThis(abi.encodePacked(_sender)),hashThis(abi.encodePacked(_receiver)))),
+                    hashThis(abi.encodePacked(hashThis(abi.encodePacked(_tokenContract)),hashThis(abi.encodePacked(_amount))))
         ));
     }
-
+    
     function hashThis(bytes memory _input) public pure returns(bytes32){
         return sha256(_input);
+    }
+
+    function encode(address _x) public pure returns(bytes memory) {
+        return abi.encodePacked(_x);
     }
 }
