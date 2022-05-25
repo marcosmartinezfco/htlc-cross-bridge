@@ -1,4 +1,4 @@
-from brownie import accounts, network, config, htlcBridge, Token
+from brownie import Token, accounts, network, config, htlcBridge
 
 def main():
     dev = accounts.add(config['wallets']['from_key'])
